@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.3.2">Jekyll</generator><link href="http://localhost:4000/feed.xml" rel="self" type="application/atom+xml" /><link href="http://localhost:4000/" rel="alternate" type="text/html" /><updated>2024-01-02T14:40:41-06:00</updated><id>http://localhost:4000/feed.xml</id><title type="html">Ode to an Array</title><subtitle>Writing within the landscape of array languages.</subtitle><author><name>Ethan Jones</name></author><entry><title type="html">Handling Intervals in an Aforementioned Dempster-Shafer Theory Implementation</title><link href="http://localhost:4000/2024/01/01/dst_ii.html" rel="alternate" type="text/html" title="Handling Intervals in an Aforementioned Dempster-Shafer Theory Implementation" /><published>2024-01-01T00:00:00-06:00</published><updated>2024-01-01T00:00:00-06:00</updated><id>http://localhost:4000/2024/01/01/dst_ii</id><content type="html" xml:base="http://localhost:4000/2024/01/01/dst_ii.html"><![CDATA[<script type="text/javascript" id="MathJax-script" async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+</script>
+
+<p>The <a href="../2023/12/31/dst.html">previous</a> introduced an implemention that handled sets; what could we
+do if we wanted to handle intervals?</p>]]></content><author><name>Ethan Jones</name></author><category term="ode," /><category term="dempster-shafer," /><category term="sensor" /><category term="fusion," /><category term="futhark," /><category term="probability" /><summary type="html"><![CDATA[]]></summary></entry><entry><title type="html">Notes on a Dempster-Shafer Theory Implementation</title><link href="http://localhost:4000/2023/12/31/dst.html" rel="alternate" type="text/html" title="Notes on a Dempster-Shafer Theory Implementation" /><published>2023-12-31T00:00:00-06:00</published><updated>2023-12-31T00:00:00-06:00</updated><id>http://localhost:4000/2023/12/31/dst</id><content type="html" xml:base="http://localhost:4000/2023/12/31/dst.html"><![CDATA[<script type="text/javascript" id="MathJax-script" async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+</script>
+
+<p>An introduction to Dempster-Shafer Theory can be found within the thorough reports of
+<em>Sentz and Ferson</em><sup id="fnref:1" role="doc-noteref"><a href="#fn:1" class="footnote" rel="footnote">1</a></sup> or <em>El-Mahassni and White</em><sup id="fnref:2" role="doc-noteref"><a href="#fn:2" class="footnote" rel="footnote">2</a></sup>. This implementation
+is in <a href="https://futhark-lang.org/">futhark</a> pseudocode.</p>
+
+<hr />
+<p><br /></p>
+
+<p>There’s three functions to compute: \(bel\), \(pl\), and \(comb\).
+Skipping \(comb\) for later, given the universe \(X\)…</p>
+
+\[bel(A) = \sum_{B \vert B \subseteq A} m(B). \ \ \ \ \ \ pl(A)  = \sum_{B
+\vert B \cap A \neq \emptyset} m(B).\]
+
+<p>An implementation entails <code class="language-plaintext highlighter-rouge">t</code> to be a tuple composing some \(\vert X \vert\)-bit bitset
+and an accompanying <code class="language-plaintext highlighter-rouge">real</code> to represent mass.</p>
+
+<pre><code class="language-futhark">type u          -- some bitset implementation; left in the air.
+type m = f64
+type t = (u, m) 
+
+val bel [f] : [f]t -&gt; u -&gt; m
+val pl  [f] : [f]t -&gt; u -&gt; m
+
+def bel e a = 
+  map (\(b_s, b_m) -&gt; 
+    if (X.is_subset b_s a) 
+      then b_m else 0.0f64
+  ) e |&gt; f64.sum
+
+def pl  e a = -- An alternative expression of `pl` that only needs `bel`.
+  complement a |&gt; bel e |&gt; (f64.-) 1.0f64
+</code></pre>
+
+<p>A problem arises with \(comb\) rules; consider <em>Dempster’s rule of
+combination</em>:</p>
+
+\[(m_{1} \oplus m_{2})(A) =  \frac{1}{1-K} \sum_{B \cap C = A \neq \emptyset}
+  m_{1}(B)m_{2}(C)\]
+
+<p>Forming the basic belief assignment requires computing all possible intersections of \(m_{1}\) and \(m_{2}\),
+or a function with the signature <code class="language-plaintext highlighter-rouge">[b]t -&gt; [c]t -&gt; [b*c]t</code>. There’s two problems here:</p>
+
+<ol>
+  <li><code class="language-plaintext highlighter-rouge">[b]t -&gt; [c]t -&gt; [b*c]t</code> implies exponential growth. Looking closer,
+  this isn’t really the case; intersections that produce the empty set can be
+  removed and assignments with the same bitset can be merged. However, these
+  aforementioned cleanups can’t be reasoned about at compile-time (think a known array
+  size) and we run into problems with irregular arrays.</li>
+  <li><code class="language-plaintext highlighter-rouge">reduce</code> takes an <code class="language-plaintext highlighter-rouge">op</code> parameter with the signature <code class="language-plaintext highlighter-rouge">a -&gt; a -&gt; a</code>. To
+  court this attractive <em>O(log(n))</em> span, <code class="language-plaintext highlighter-rouge">[b]t -&gt; [c]t -&gt; [b*c]t</code> must become
+  <code class="language-plaintext highlighter-rouge">[b]t -&gt; [b]t -&gt; [b*b]t -&gt; [b]t</code>.</li>
+</ol>
+
+<hr />
+<p><br /></p>
+
+<p>Approximation schemes are a potential solution: we can take the resulting array of <code class="language-plaintext highlighter-rouge">[b*c]t</code>
+(or the cleaned up <code class="language-plaintext highlighter-rouge">[?]t</code>) and compute an approximation to a set of focal
+elements <code class="language-plaintext highlighter-rouge">[a]t</code>.</p>
+
+<p>There’s some padding in the opening of <em>Bauer</em>’s paper<sup id="fnref:0" role="doc-noteref"><a href="#fn:0" class="footnote" rel="footnote">3</a></sup> that is prescient.</p>
+
+<blockquote>
+  <p>A second criterion to assess the quality of an approximation is its ability to induce
+some “structure” on the given information, thus allowing
+an adequate presentation of the essentials of its contents to a user.</p>
+</blockquote>
+
+<p>This “structure” provided by an approximation, in this case, easily enable parallelization of \(comb\) rules.</p>
+
+<p>Both of the two schemes below are rather simple. <em>kx</em> (effectively <em>klx</em>) takes
+the largest <em>k</em> masses and then normalizes; <em>summarize</em> takes
+the largest <em>k</em> masses and then concats the union/sum of what’s left over.</p>
+
+<pre><code class="language-futhark">val kx [f] : (k: i64) -&gt; [f]t -&gt; [k]t
+def kx k e = 
+  let sorted = merge_sort_by_key (.1) (f64.&lt;=) e |&gt; reverse
+  -- if k is larger than w, we need to pad with `nil`.
+  in (if k &gt; f
+    then (++) sorted (replicate (k - f) (nil, 0.0f64)) :&gt; [k]t
+    else take k sorted
+  ) |&gt; normalize
+
+val summarize [f] : (k: i64) -&gt; [f]t -&gt; [k+1]t
+def summarize k e =
+  let sm (a: []t): t = 
+    let a_union = map (.0) a |&gt; reduce (union) (nil)
+    let a_sum   = map (.1) a |&gt; f64.sum
+    in (a_union, a_sum)
+
+  let sorted = merge_sort_by_key (.1) (f64.&lt;=) e |&gt; reverse
+  -- if k is larger than w, we need to pad with nil.
+  in if k &gt; f
+    then (++) sorted (replicate ((k + 1) - f) (nil, 0.0f64)) :&gt; [k+1]t
+    else (++) (take k sorted) [(sm (drop k sorted))]
+</code></pre>
+
+<p>With these, we can write \(comb\) such that it utilizes <code class="language-plaintext highlighter-rouge">reduce</code>.</p>
+
+<pre><code class="language-futhark">-- | Combine a set of masses together with a combination rule and an
+-- | approximation scheme.
+val comb [f][a][b] : 
+  ([a]t -&gt; [a]t -&gt; [b]t) -&gt; ([b]t -&gt; [a]t) -&gt; [f][a]t -&gt; [a]t
+
+-- https://futhark-lang.org/examples/no-neutral-element.html
+type with_neutral [a] 't = #neutral | #val [a]t
+
+def comb [f][a] rl apx e =
+  let e_tagged: [f]with_neutral [a]t = map (\z -&gt; #val z) e
+  let m = 
+    reduce (\m1 m2 -&gt; match (m1, m2)
+      case (#val b, #val c) -&gt; #val (rl b c |&gt; apx)
+      case (#neutral, _) -&gt; m2
+      case (_, #neutral) -&gt; m1
+    ) #neutral e_tagged
+
+  in match m 
+    case #neutral -&gt; replicate a (X.nil, 0.0f64)
+    case #val x   -&gt; x
+</code></pre>
+
+<p>A highly parallel combination routine becomes the pleasing, curried <code class="language-plaintext highlighter-rouge">let comb_dempster_kx k = comb comb_dempster (kx k)</code>.</p>
+
+<hr />
+<p><br /></p>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:1" role="doc-endnote">
+      <p><em>Sentz</em>, <em>Ferson</em> -<a href="https://www.stat.berkeley.edu/~aldous/Real_World/dempster_shafer.pdf">Combination of Evidence in Dempster-Shafer Theory</a> <a href="#fnref:1" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:2" role="doc-endnote">
+      <p><em>El-Mahassni</em>, <em>White</em> - <a href="https://apps.dtic.mil/sti/tr/pdf/ADA621365.pdf">A Discussion of Dempster-Shafer Theory and its Application to Identification Fusion</a> <a href="#fnref:2" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:0" role="doc-endnote">
+      <p><em>Bauer</em> - <a href="https://arxiv.org/pdf/1302.3557.pdf">Approximations for Decision Making in the Dempster-Shafer Theory of Evidence</a> <a href="#fnref:0" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>Ethan Jones</name></author><category term="ode," /><category term="dempster-shafer," /><category term="sensor" /><category term="fusion," /><category term="futhark," /><category term="probability" /><summary type="html"><![CDATA[]]></summary></entry></feed>
